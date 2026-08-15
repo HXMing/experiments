@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stress-demo
+  namespace: default
+  labels:
+    app: stress-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stress-demo
+  template:
+    metadata:
+      name: stress-demo
+      labels:
+        app: stress-demo
+    spec:
+      containers:
+        - args:
+            - '--vm'
+            - '2'
+            - '--vm-bytes'
+            - '1600M'
+            - '-c'
+            - '2'
+            - '--vm-hang'
+            - '2'
+          command:
+            - stress-ng  # 仅修改这里，从 stress 改为 stress-ng
+          image: alexeiled/stress-ng:latest
+          imagePullPolicy: Always
+          name: stress
+          resources:
+            limits:
+              cpu: '1'
+              memory: 1Gi
+            requests:
+              cpu: '1'
+              memory: 1Gi
+      restartPolicy: Always
+      schedulerName: koord-scheduler

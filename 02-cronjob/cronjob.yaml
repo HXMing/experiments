@@ -1,0 +1,22 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: extensive-cronjob
+  namespace: default
+spec:
+  schedule: "* * * * *"  # 每分钟执行一次
+  startingDeadlineSeconds: 200  # 如果错过执行时间，最多等待200秒
+  concurrencyPolicy: Replace
+  successfulJobsHistoryLimit: 5  # 保留5个成功的Job历史记录
+  failedJobsHistoryLimit: 3  # 保留3个失败的Job历史记录
+  suspend: false  # 是否挂起CronJob，默认为false
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: my-container
+            image: busybox:latest
+            command: ["sh", "-c", "date && sleep 120"]
+            imagePullPolicy: IfNotPresent
+          restartPolicy: OnFailure  # Job的重启策略

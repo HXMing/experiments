@@ -1,0 +1,9 @@
+{
+  "name": "python-demo",
+  "from_image": "ubuntu:24.04",
+  "vcpus": 1,
+  "memory_mib": 512,
+  "rootfs_mib": 1536,
+  "warmup_seconds": 3,
+  "warmup_mib": 64
+}

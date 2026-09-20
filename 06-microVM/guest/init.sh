@@ -1,13 +1,8 @@
 #!/bin/sh
 set -eu
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-mount -t proc proc /proc
-mount -t sysfs sysfs /sys
-mount -t devtmpfs devtmpfs /dev
-mkdir -p /dev/pts /run /tmp
-mount -t devpts devpts /dev/pts
-mount -t tmpfs -o mode=755 tmpfs /run
-mount -t tmpfs -o mode=1777 tmpfs /tmp
+. /opt/microvm/mounts.sh
+mount_runtime_filesystems
 exec </dev/console >/dev/console 2>&1
 ip link set lo up
 ip link set eth0 up

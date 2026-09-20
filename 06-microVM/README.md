@@ -62,6 +62,7 @@ microVM/
 ├── guest/
 │   ├── Dockerfile              # 向基础镜像注入实验运行环境
 │   ├── init.sh                 # mount、网络、exec Python PID 1
+│   ├── mounts.sh               # 仅挂载尚未挂载的 guest 运行时文件系统
 │   └── agent.py                # 预热、探针、实例身份、读写隔离验证
 ├── tests/test_lab.py           # 无需 KVM 的本地测试
 └── artifacts/                  # 运行时自动生成，git 忽略
@@ -268,6 +269,7 @@ sudo python3 lab.py list
 | fromImage 构建失败 | 查看 `from-image.log`；镜像必须是 ARM64 且适配 apt/dpkg，Docker 必须能访问源 |
 | rootfs 无空间 | 提高 `rootfs_mib` 并使用新模板名；检查构建临时目录空间 |
 | kernel 格式或启动失败 | 检查 `console.log`、ARM Image 格式、virtio/ext4/串口驱动 |
+| `devtmpfs already mounted` 后 `Attempted to kill init` | 旧 init 重复挂载内核已挂载的 `/dev`；同步新版 guest 文件和 from-image.sh，重新构建 rootfs，操作见下文 |
 | 超时且看不到 `/health` | 检查 init 日志、内存预算和 Python 异常；确认 guest eth0 已配置 |
 | snapshot/load 失败 | 同一服务器、同一模板自带的 FC binary、匹配的 memory/vmstate/rootfs、实例 cwd 和 tap0 |
 | ARM GIC/CPU 兼容错误 | 本实验不跨主机恢复；重启/升级 host 后若兼容性变化应重建模板 |
@@ -277,6 +279,21 @@ sudo python3 lab.py list
 
 异常退出后先运行 `stop --all`。若系统突然断电或控制程序在资源登记前被强制杀死，检查 `ip netns list` 中的 `mvl-` 资源与 `instances/*/instance.json`，核实归属后手动处理，不批量删除其他项目网络资源。
 
+### 已有失败构建如何应用 guest init 修复
+
+内核可能在执行 `/sbin/lab-init` 前自动挂载 `/dev`。新版 `mounts.sh` 使用 `mountpoint` 检查现有挂载，跳过已挂载目标；没有自动挂载的内核仍会得到必要挂载，真正的挂载错误仍会使 init 失败。
+
+同步本目录下的 `guest/init.sh`、`guest/mounts.sh`、`guest/Dockerfile`、`scripts/from-image.sh` 到服务器后，使用新名称重建模板。只替换 host 的 `lab.py` 不会更新已生成 rootfs 内的脚本：
+
+```bash
+python3 -c 'import json; from pathlib import Path; c=json.loads(Path("template.example.json").read_text()); c["name"]="python-demo-v2"; Path("template.v2.json").write_text(json.dumps(c, indent=2)+"\n")'
+sudo python3 lab.py build template.v2.json
+sudo python3 lab.py start python-demo-v2 --mode warm --count 3 --parallel 3
+sudo python3 lab.py verify python-demo-v2
+```
+
+旧的失败目录可以保留排查，不需要重下 Firecracker/kernel。Docker 的 COPY 输入变化会使 init 对应构建层更新。若 `python-demo-v2` 也已存在，请再选一个未使用的名字。
+
 这是受信任镜像和 guest 的功能实验：VMM 以 root 运行、未启用 jailer/cgroup 配额，演示 API 也没有认证。快照复制会复制应用状态，本实验只为 demo 注入新身份、时间和 Python 随机种子，并未处理所有 guest 内核/用户程序的随机数和密钥状态；它不构成生产多租户沙箱。
 
 ## 9. 本地验证与参考资料
@@ -285,12 +302,12 @@ sudo python3 lab.py list
 
 ```bash
 python3 -m unittest discover -s tests -v
-bash -n scripts/from-image.sh guest/init.sh
+bash -n scripts/from-image.sh guest/init.sh guest/mounts.sh
 python3 lab.py --help
 python3 scripts/fetch-assets.py --help
 ```
 
-测试覆盖 Unix socket HTTP 成功/失败、guest HTTP 读写、配置边界和避免 PID 复用误杀。它们不能替代实验 A/B/C 的真实 KVM 验收。
+测试覆盖版本输出解析、Unix socket HTTP 成功/失败、guest HTTP 读写、配置边界、避免 PID 复用误杀，以及已挂载/未挂载/挂载失败时的真实 shell 控制流程。挂载测试使用命令替身，不执行真实 mount；它们不能替代实验 A/B/C 的真实 KVM 验收。
 
 Firecracker 一手资料（实现固定到 v1.12.1）：
 

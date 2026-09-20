@@ -9,6 +9,7 @@ import tarfile
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+import sys
 
 VERSION = "v1.12.1"
 BUCKET = "https://s3.amazonaws.com/spec.ccfc.min"
@@ -52,7 +53,6 @@ def kernel_url():
         raise RuntimeError("No 6.1 ARM kernel in official CI bucket; pass --kernel-url or provide assets/Image manually. See README.")
     key = max(keys, key=lambda value: int(value.rsplit(".", 1)[1]))
     return BUCKET + "/" + key
-
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)

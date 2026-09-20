@@ -30,6 +30,23 @@ def run(argv, **kwargs):
     return subprocess.run([str(x) for x in argv], check=True, **kwargs)
 
 
+def check_firecracker_version(binary):
+    result = run([binary, "--version"], capture_output=True, text=True)
+    # Firecracker may also print lifecycle logs. Match a complete version line
+    # in either stream, without accepting a version merely mentioned in a log.
+    output = result.stdout + "\n" + result.stderr
+    versions = {line.strip() for line in output.splitlines()
+                if re.fullmatch(r"Firecracker v\S+", line.strip())}
+    if not versions:
+        raise RuntimeError(f"Cannot parse Firecracker --version output: {output.strip()!r}")
+    if len(versions) != 1:
+        raise RuntimeError(f"Conflicting Firecracker version lines: {sorted(versions)}")
+    actual = versions.pop()
+    if actual != VERSION:
+        raise RuntimeError(f"This lab pins {VERSION}; found {actual}")
+    return actual
+
+
 def write_json(path, value):
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n")
@@ -182,9 +199,7 @@ def doctor():
     binary = STATE / "assets/firecracker"
     if not binary.exists() or not (STATE / "assets/Image").exists():
         raise RuntimeError("Missing assets; run python3 scripts/fetch-assets.py first")
-    actual = run([binary, "--version"], capture_output=True, text=True).stdout.strip()
-    if actual != VERSION:
-        raise RuntimeError(f"This lab pins {VERSION}; found {actual}")
+    actual = check_firecracker_version(binary)
     # Probe Docker without modifying the daemon or installing anything.
     run(["docker", "info"], stdout=subprocess.DEVNULL)
     return {"host": platform.platform(), "architecture": platform.machine(), "kvm_api": 12,

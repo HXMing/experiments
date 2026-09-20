@@ -3,6 +3,7 @@ import importlib.util
 import json
 from pathlib import Path
 import socket
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -22,6 +23,103 @@ def module(name, path):
 
 lab = module("lab", ROOT / "lab.py")
 agent = module("agent", ROOT / "guest/agent.py")
+
+
+class GuestMountTests(unittest.TestCase):
+    def run_mount_setup(self, premounted="", fail_mount=""):
+        # Execute the real POSIX shell helper with command doubles. No real
+        # mounts, directory creation, root permissions or guest kernel needed.
+        harness = r'''
+            PREMOUNTED=$2
+            FAIL_MOUNT=$3
+            mountpoint() {
+                case " $PREMOUNTED " in
+                    *" $2 "*) return 0 ;;
+                    *) return 1 ;;
+                esac
+            }
+            mount() {
+                printf '%s\n' "$*"
+                for argument in "$@"; do destination=$argument; done
+                if [ "$destination" = "$FAIL_MOUNT" ]; then return 32; fi
+            }
+            mkdir() { :; }
+            . "$1"
+            mount_runtime_filesystems
+            printf 'INIT_MOUNTS_READY\n'
+        '''
+        return subprocess.run(["sh", "-eu", "-c", harness, "mount-test",
+                               str(ROOT / "guest/mounts.sh"), premounted, fail_mount],
+                              capture_output=True, text=True)
+
+    def test_kernel_mounted_devtmpfs_is_not_mounted_again(self):
+        result = self.run_mount_setup(premounted="/dev", fail_mount="/dev")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("-t devtmpfs devtmpfs /dev", result.stdout)
+        self.assertIn("-t proc proc /proc", result.stdout)
+        self.assertIn("-t devpts devpts /dev/pts", result.stdout)
+        self.assertIn("INIT_MOUNTS_READY", result.stdout)
+
+    def test_kernel_without_auto_mount_gets_all_required_mounts(self):
+        result = self.run_mount_setup()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), [
+            "-t proc proc /proc", "-t sysfs sysfs /sys", "-t devtmpfs devtmpfs /dev",
+            "-t devpts devpts /dev/pts", "-t tmpfs -o mode=755 tmpfs /run",
+            "-t tmpfs -o mode=1777 tmpfs /tmp", "INIT_MOUNTS_READY"])
+
+    def test_all_preexisting_mounts_are_preserved(self):
+        result = self.run_mount_setup(premounted="/proc /sys /dev /dev/pts /run /tmp")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "INIT_MOUNTS_READY\n")
+
+    def test_real_mount_failure_still_stops_init(self):
+        result = self.run_mount_setup(fail_mount="/sys")
+        self.assertEqual(result.returncode, 32)
+        self.assertNotIn("INIT_MOUNTS_READY", result.stdout)
+        self.assertNotIn("devtmpfs", result.stdout)
+
+
+class FirecrackerVersionTests(unittest.TestCase):
+    exit_log = ("2026-09-16T14:31:36.874422390 [anonymous-instance:main] "
+                "Firecracker exiting successfully. exit_code=0\n")
+
+    def check_output(self, stdout, stderr=""):
+        result = subprocess.CompletedProcess(["firecracker", "--version"], 0, stdout, stderr)
+        with patch.object(lab, "run", return_value=result):
+            return lab.check_firecracker_version(Path("firecracker"))
+
+    def test_plain_version(self):
+        self.assertEqual(self.check_output("Firecracker v1.12.1\n"), lab.VERSION)
+
+    def test_server_output_with_exit_log(self):
+        self.assertEqual(self.check_output("Firecracker v1.12.1\n\n" + self.exit_log), lab.VERSION)
+
+    def test_logs_and_version_in_either_stream(self):
+        for stdout, stderr in (("Firecracker v1.12.1\n", self.exit_log),
+                               (self.exit_log, "Firecracker v1.12.1\n"),
+                               (self.exit_log + "  Firecracker v1.12.1\r\n", "")):
+            with self.subTest(stdout=stdout, stderr=stderr):
+                self.assertEqual(self.check_output(stdout, stderr), lab.VERSION)
+
+    def test_wrong_or_development_version_still_rejected(self):
+        for version in ("v1.12.10", "v1.13.0", "v1.12.1-dev"):
+            with self.subTest(version=version), self.assertRaisesRegex(RuntimeError, "This lab pins"):
+                self.check_output(f"Firecracker {version}\n" + self.exit_log)
+
+    def test_missing_version_not_inferred_from_logs(self):
+        for output in ("", self.exit_log, "[main] expected Firecracker v1.12.1\n"):
+            with self.subTest(output=output), self.assertRaisesRegex(RuntimeError, "Cannot parse"):
+                self.check_output(output)
+
+    def test_conflicting_versions_rejected(self):
+        with self.assertRaisesRegex(RuntimeError, "Conflicting"):
+            self.check_output("Firecracker v1.12.1\n", "Firecracker v1.13.0\n")
+
+    def test_command_failure_propagates(self):
+        with patch.object(lab, "run", side_effect=subprocess.CalledProcessError(1, "firecracker")):
+            with self.assertRaises(subprocess.CalledProcessError):
+                lab.check_firecracker_version(Path("firecracker"))
 
 
 class ConfigTests(unittest.TestCase):

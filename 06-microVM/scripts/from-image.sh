@@ -15,7 +15,7 @@ cleanup() {
 }
 trap cleanup EXIT
 mkdir -p "$work/context" "$work/rootfs"
-cp "$source_dir/guest/Dockerfile" "$source_dir/guest/init.sh" "$source_dir/guest/agent.py" "$work/context/"
+cp "$source_dir/guest/Dockerfile" "$source_dir/guest/init.sh" "$source_dir/guest/mounts.sh" "$source_dir/guest/agent.py" "$work/context/"
 cp "$out/config.json" "$work/context/guest-config.json"
 docker pull --platform linux/arm64 "$image"
 docker image inspect "$image" > "$out/source-image.json"
